@@ -13,8 +13,9 @@ Expected folder layout under the data root:
       configs/       -> config      -> trusted
       postmortems/   -> postmortem  -> semi
       tickets/       -> ticket      -> untrusted
+      logs/          -> log         -> untrusted
 
-Requires: pyyaml  (pip install pyyaml)
+Requires: pyyaml, pydantic
 """
 
 from __future__ import annotations
@@ -22,53 +23,39 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
 
+from app.ingestion.models import DocType, Document, Environment, TrustLevel
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BYTES = 1 * 1024 * 1024  # 1 MB
 
-TEXT_SUFFIXES = {".md", ".txt"}
+TEXT_SUFFIXES = {".md", ".txt", ".log"}
 STRUCTURED_SUFFIXES = {".yaml", ".yml", ".json"}
 SUPPORTED_SUFFIXES = TEXT_SUFFIXES | STRUCTURED_SUFFIXES
 
 # A document's role comes from the folder it lives in.
 ROLE_BY_FOLDER = {
-    "runbooks": "runbook",
-    "configs": "config",
-    "postmortems": "postmortem",
-    "tickets": "ticket",
+    "runbooks": DocType.RUNBOOK,
+    "configs": DocType.CONFIG,
+    "postmortems": DocType.POSTMORTEM,
+    "tickets": DocType.TICKET,
+    "logs": DocType.LOG,
 }
 
 # Trust depends on who could have written the document, not on the environment.
+# Logs are untrusted: they often contain text taken from users and requests.
 TRUST_BY_ROLE = {
-    "runbook": "trusted",
-    "config": "trusted",
-    "postmortem": "semi",
-    "ticket": "untrusted",
+    DocType.RUNBOOK: TrustLevel.TRUSTED,
+    DocType.CONFIG: TrustLevel.TRUSTED,
+    DocType.POSTMORTEM: TrustLevel.SEMI,
+    DocType.TICKET: TrustLevel.UNTRUSTED,
+    DocType.LOG: TrustLevel.UNTRUSTED,
 }
-
-# Environment is a risk label: prod means more caution, not more trust.
-VALID_ENVS = {"prod", "staging", "dev"}
-
-
-@dataclass
-class Document:
-    id: str
-    source_path: str
-    team: str
-    service: str
-    env: str
-    doc_type: str
-    trust_level: str
-    content: str
-    content_hash: str
-    loaded_at: str
-    metadata: dict = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
@@ -100,7 +87,7 @@ def _normalize_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _infer_doc_type(path: Path) -> str:
+def _infer_doc_type(path: Path) -> DocType:
     """Map the parent folder name to a document role."""
     folder = path.parent.name.lower()
     if folder not in ROLE_BY_FOLDER:
@@ -108,25 +95,11 @@ def _infer_doc_type(path: Path) -> str:
     return ROLE_BY_FOLDER[folder]
 
 
-def _assign_trust_level(doc_type: str) -> str:
+def _assign_trust_level(doc_type: DocType) -> TrustLevel:
     """Return the trust level for a document role."""
     if doc_type not in TRUST_BY_ROLE:
         raise ValueError(f"No trust level defined for doc type: {doc_type!r}")
     return TRUST_BY_ROLE[doc_type]
-
-
-def _normalize_env(env: str) -> str:
-    env = env.strip().lower()
-    if env not in VALID_ENVS:
-        raise ValueError(f"Unknown environment: {env!r}")
-    return env
-
-
-def _normalize_name(value: str, field_name: str) -> str:
-    value = value.strip().lower()
-    if not value:
-        raise ValueError(f"{field_name} must not be empty")
-    return value
 
 
 def _render_structured(text: str, suffix: str) -> str:
@@ -154,6 +127,7 @@ def _document_id(team: str, content_hash: str) -> str:
     Stable document ID. The team is included so the same file loaded by
     two tenants gets two different IDs.
     """
+    team = team.strip().lower()
     return hashlib.sha256(f"{team}:{content_hash}".encode("utf-8")).hexdigest()[:16]
 
 
@@ -171,7 +145,8 @@ def load_file(
 ) -> Document:
     """
     Build the full Document record for one file.
-    Raises ValueError or OSError if the file should not be loaded.
+    Raises ValueError (including Pydantic's ValidationError) or OSError
+    if the file should not be loaded.
     """
     root = root.resolve()
     resolved = path.resolve()
@@ -191,21 +166,21 @@ def load_file(
     if suffix in STRUCTURED_SUFFIXES:
         text = _render_structured(text, suffix)
 
-    team = _normalize_name(team, "team")
     content_hash = _content_hash(text)
 
+    # The Document model checks team, service, env, the path and blank content.
     return Document(
         id=_document_id(team, content_hash),
         # Relative path with forward slashes, so no machine details are stored.
         source_path=resolved.relative_to(root).as_posix(),
         team=team,
-        service=_normalize_name(service, "service"),
-        env=_normalize_env(env),
+        service=service,
+        env=Environment(env.strip().lower()),
         doc_type=doc_type,
         trust_level=trust_level,
         content=text,
         content_hash=content_hash,
-        loaded_at=datetime.now(timezone.utc).isoformat(),
+        loaded_at=datetime.now(timezone.utc),
         metadata={"format": suffix.lstrip(".")},
     )
 

@@ -14,9 +14,9 @@ import logging
 import re
 from collections import Counter
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
-from app.ingestion.loaders import Document
+from app.ingestion.models import Document
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def redact_document(doc: Document) -> Document:
         )
 
     metadata = {**doc.metadata, "redacted": bool(counts), "redaction_counts": counts}
-    return replace(doc, content=text, metadata=metadata)
+    return doc.model_copy(update={"content": text, "metadata": metadata})
 
 
 def redact_documents(docs: Iterable[Document]) -> list[Document]:

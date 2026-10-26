@@ -11,9 +11,11 @@ Run from the project root with:
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
-from app.ingestion.loaders import Document, load_directory
+from app.ingestion.loaders import load_directory
+from app.ingestion.models import DocType, Document, Environment, TrustLevel
 from app.ingestion.redaction import redact_document, redact_text
 
 GITHUB_TOKEN = "ghp_" + "a1B2" * 9
@@ -30,12 +32,12 @@ def make_doc(content: str) -> Document:
         source_path="configs/app.yaml",
         team="payments",
         service="api",
-        env="prod",
-        doc_type="config",
-        trust_level="trusted",
+        env=Environment.PROD,
+        doc_type=DocType.CONFIG,
+        trust_level=TrustLevel.TRUSTED,
         content=content,
         content_hash="hash123",
-        loaded_at="2026-10-26T00:00:00+00:00",
+        loaded_at=datetime(2026, 10, 26, tzinfo=timezone.utc),
         metadata={"format": "yaml"},
     )
 

@@ -108,6 +108,20 @@ def test_unsupported_extension_is_skipped(data_root):
     assert len(docs) == 4
 
 
+def test_logs_are_loaded_as_untrusted(data_root):
+    write(data_root / "logs" / "payments.log", "2026-10-26 ERROR timeout user=alice\n")
+    docs = load_directory(data_root, team="payments", service="api", env="dev")
+    log = by_type(docs, "log")[0]
+    assert log.trust_level == "untrusted"
+    assert log.source_path == "logs/payments.log"
+
+
+def test_empty_file_is_skipped(data_root):
+    write(data_root / "runbooks" / "empty.md", "   \n\n")
+    docs = load_directory(data_root, team="payments", service="api", env="dev")
+    assert len(docs) == 4
+
+
 def test_unknown_folder_is_skipped(data_root):
     write(data_root / "random" / "notes.md", "not a known role\n")
     docs = load_directory(data_root, team="payments", service="api", env="dev")
