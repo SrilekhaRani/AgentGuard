@@ -126,3 +126,14 @@ class Chunk(_TenantFields):
         if not v.strip():
             raise ValueError("text must not be blank")
         return v
+
+
+class SearchResult(_TenantFields):
+    """One chunk returned by a search, with its similarity score."""
+    chunk_id: str
+    doc_id: str
+    chunk_index: int = Field(ge=0)
+    text: str
+    heading: str = ""
+    redacted: bool
+    score: float              # cosine similarity: higher means more relevant
